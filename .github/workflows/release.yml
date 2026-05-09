@@ -42,7 +42,7 @@ jobs:
           path: dist/Duccky-portable.exe
 
   build-linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
@@ -70,30 +70,24 @@ jobs:
           --collect-all customtkinter
           main.py
 
+      - name: Create tar.gz portable
+        run: |
+          mkdir -p Duccky-portable-linux
+          cp dist/Duccky Duccky-portable-linux/Duccky
+          cp logo.png Duccky-portable-linux/logo.png
+          chmod +x Duccky-portable-linux/Duccky
+          tar -czf Duccky-portable-linux-x86_64.tar.gz Duccky-portable-linux/
+
       - name: Create AppDir
         run: |
           mkdir -p AppDir/usr/bin
           cp dist/Duccky AppDir/usr/bin/Duccky
-
           cp logo.png AppDir/logo.png
 
-          cat > AppDir/AppRun << 'APPRUN'
-          #!/bin/bash
-          SELF=$(readlink -f "$0")
-          HERE=${SELF%/*}
-          exec "${HERE}/usr/bin/Duccky" "$@"
-          APPRUN
+          printf '#!/bin/bash\nSELF=$(readlink -f "$0")\nHERE=${SELF%%/*}\nexec "${HERE}/usr/bin/Duccky" "$@"\n' > AppDir/AppRun
           chmod +x AppDir/AppRun
 
-          cat > AppDir/Duccky.desktop << 'DESKTOP'
-          [Desktop Entry]
-          Type=Application
-          Name=Duccky
-          Exec=Duccky
-          Icon=logo
-          Categories=Utility;System;
-          Comment=System Information Viewer
-          DESKTOP
+          printf '[Desktop Entry]\nType=Application\nName=Duccky\nExec=Duccky\nIcon=logo\nCategories=Utility;System;\nComment=System Information Viewer\n' > AppDir/Duccky.desktop
 
       - name: Build AppImage
         run: |
@@ -105,6 +99,11 @@ jobs:
         with:
           name: Duccky-Linux-AppImage
           path: Duccky-portable-x86_64.AppImage
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Duccky-Linux-tar
+          path: Duccky-portable-linux-x86_64.tar.gz
 
   release:
     needs: [build-windows, build-linux]
@@ -121,10 +120,16 @@ jobs:
           name: Duccky-Linux-AppImage
           path: artifacts/
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: Duccky-Linux-tar
+          path: artifacts/
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             artifacts/Duccky-portable.exe
             artifacts/Duccky-portable-x86_64.AppImage
+            artifacts/Duccky-portable-linux-x86_64.tar.gz
           generate_release_notes: true

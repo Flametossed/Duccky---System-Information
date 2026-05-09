@@ -25,7 +25,8 @@ Grab the latest portable build from [Releases](../../releases/latest):
 | Platform | File |
 |----------|------|
 | Windows 10/11 | `Duccky-portable.exe` — no install needed, run directly |
-| Linux (x86_64) | `Duccky-portable-x86_64.AppImage` — `chmod +x` then run |
+| Linux (x86_64) | `Duccky-portable-x86_64.AppImage` — requires FUSE2 (`libfuse2`); `chmod +x` then run |
+| Linux (x86_64) | `Duccky-portable-linux-x86_64.tar.gz` — no dependencies; extract and run `./Duccky-portable-linux/Duccky` |
 
 ## Running from source
 
