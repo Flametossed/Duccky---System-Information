@@ -1,0 +1,127 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build Windows portable exe
+        run: >
+          pyinstaller
+          --onefile
+          --windowed
+          --name "Duccky"
+          --icon logo.ico
+          --add-data "logo.png;."
+          --add-data "logo.ico;."
+          main.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Duccky-Windows
+          path: dist/Duccky.exe
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk tk-dev libfuse2
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build Linux binary
+        run: >
+          pyinstaller
+          --onefile
+          --name "Duccky"
+          --add-data "logo.png:."
+          --add-data "logo.ico:."
+          main.py
+
+      - name: Create AppDir
+        run: |
+          mkdir -p AppDir/usr/bin
+          cp dist/Duccky AppDir/usr/bin/Duccky
+          cp logo.png AppDir/logo.png
+
+          cat > AppDir/AppRun << 'APPRUN'
+          #!/bin/bash
+          SELF=$(readlink -f "$0")
+          HERE=${SELF%/*}
+          exec "${HERE}/usr/bin/Duccky" "$@"
+          APPRUN
+          chmod +x AppDir/AppRun
+
+          cat > AppDir/Duccky.desktop << 'DESKTOP'
+          [Desktop Entry]
+          Type=Application
+          Name=Duccky
+          Exec=Duccky
+          Icon=logo
+          Categories=Utility;System;
+          Comment=System Information Viewer
+          DESKTOP
+
+      - name: Build AppImage
+        run: |
+          wget -q "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage" -O appimagetool
+          chmod +x appimagetool
+          ARCH=x86_64 ./appimagetool --appimage-extract-and-run AppDir Duccky-x86_64.AppImage
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Duccky-Linux-AppImage
+          path: Duccky-x86_64.AppImage
+
+  release:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Duccky-Windows
+          path: artifacts/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: Duccky-Linux-AppImage
+          path: artifacts/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/Duccky.exe
+            artifacts/Duccky-x86_64.AppImage
+          generate_release_notes: true

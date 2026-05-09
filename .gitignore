@@ -1,0 +1,21 @@
+__pycache__/
+*.pyc
+*.pyo
+dist/
+build/
+*.egg-info/
+.venv/
+venv/
+env/
+
+# PyInstaller generated specs (we use CLI args in CI)
+*.spec
+
+# Generated output files
+duccky-specs-*.txt
+duccky-snapshot-*.png
+
+# IDE / local tooling
+.claude/
+.vscode/
+.idea/
