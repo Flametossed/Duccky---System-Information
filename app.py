@@ -1,6 +1,7 @@
 """Duccky — modern system information viewer."""
 
 import os
+import sys
 import threading
 import time
 from datetime import datetime
@@ -51,12 +52,14 @@ SECTIONS = [
     ("audio",       "◔",  "Audio"),
 ]
 
-F_HEAD     = ("Segoe UI", 11, "bold")
-F_BODY     = ("Segoe UI", 10)
-F_SMALL    = ("Segoe UI", 9)
-F_TITLE    = ("Segoe UI", 18, "bold")
-F_BIG      = ("Segoe UI", 22, "bold")
-F_BRAND    = ("Segoe UI", 18, "bold")
+_FONT = "Segoe UI" if sys.platform == "win32" else "DejaVu Sans"
+
+F_HEAD     = (_FONT, 11, "bold")
+F_BODY     = (_FONT, 10)
+F_SMALL    = (_FONT, 9)
+F_TITLE    = (_FONT, 18, "bold")
+F_BIG      = (_FONT, 22, "bold")
+F_BRAND    = (_FONT, 18, "bold")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOGO_PNG = os.path.join(HERE, "logo.png")
@@ -169,7 +172,7 @@ class App:
         for txt, cmd, color in [
             ("↺",  self._refresh,   C["summary"]),
             ("⬇",  self._export_txt, C["storage"]),
-            ("📷", self._snapshot,   C["gpu"]),
+            ("⊡",  self._snapshot,   C["gpu"]),
         ]:
             b = ctk.CTkButton(
                 btns, text=txt, font=("Segoe UI", 13),

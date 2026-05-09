@@ -1,12 +1,18 @@
 """System information collector — Windows primary, graceful fallback elsewhere."""
 
+import sys as _sys
 import psutil
 import platform
+import re as _re
 import socket as _socket
+import subprocess as _subprocess
 import threading
 import ctypes
-from ctypes import wintypes
 from datetime import datetime
+from pathlib import Path as _Path
+
+if _sys.platform == "win32":
+    from ctypes import wintypes
 
 try:
     import wmi as _wmilib
@@ -27,12 +33,10 @@ except ImportError:
     CPUINFO_AVAILABLE = False
 
 
-# WMI uses COM, which is per-thread. Cache one WMI connection per thread.
 _thread_local = threading.local()
 
 
 def _wmi():
-    """Return WMI handle for current thread, init COM if needed."""
     if not WMI_AVAILABLE:
         return None
     cached = getattr(_thread_local, "wmi", None)
@@ -76,7 +80,22 @@ def _uptime_str():
     return f"{d}d {h}h {m}m" if d else f"{h}h {m}m"
 
 
-# ── Static collectors ─────────────────────────────────────────────────────────
+def _dmi_read(field, default=""):
+    try:
+        return _Path(f"/sys/class/dmi/id/{field}").read_text().strip()
+    except Exception:
+        return default
+
+
+def _run(cmd, timeout=5):
+    try:
+        r = _subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return r.stdout
+    except Exception:
+        return ""
+
+
+# ── OS ────────────────────────────────────────────────────────────────────────
 
 def get_os_info():
     info = dict(
@@ -91,16 +110,27 @@ def get_os_info():
     if WMI_AVAILABLE:
         try:
             for o in _wmi().Win32_OperatingSystem():
-                info["caption"] = (o.Caption or "").strip()
-                info["version"] = o.Version or ""
-                info["build"] = o.BuildNumber or ""
-                info["architecture"] = (o.OSArchitecture or "").strip()
-                info["install_date"] = _wmi_date(o.InstallDate)
+                info["caption"]       = (o.Caption or "").strip()
+                info["version"]       = o.Version or ""
+                info["build"]         = o.BuildNumber or ""
+                info["architecture"]  = (o.OSArchitecture or "").strip()
+                info["install_date"]  = _wmi_date(o.InstallDate)
                 break
+        except Exception:
+            pass
+    elif _sys.platform == "linux":
+        try:
+            with open("/etc/os-release") as f:
+                for line in f:
+                    if line.startswith("PRETTY_NAME="):
+                        info["caption"] = line.split("=", 1)[1].strip().strip('"')
+                        break
         except Exception:
             pass
     return info
 
+
+# ── CPU ───────────────────────────────────────────────────────────────────────
 
 def get_cpu_info():
     info = dict(
@@ -120,16 +150,12 @@ def get_cpu_info():
     if WMI_AVAILABLE:
         try:
             for c in _wmi().Win32_Processor():
-                if c.Name:
-                    info["name"] = c.Name.strip()
-                info["manufacturer"] = (c.Manufacturer or "").strip()
-                info["socket"] = (c.SocketDesignation or "").strip()
-                if c.MaxClockSpeed:
-                    info["freq_max_mhz"] = float(c.MaxClockSpeed)
-                if c.L2CacheSize:
-                    info["l2_cache_kb"] = c.L2CacheSize
-                if c.L3CacheSize:
-                    info["l3_cache_kb"] = c.L3CacheSize
+                if c.Name:            info["name"]         = c.Name.strip()
+                info["manufacturer"]  = (c.Manufacturer or "").strip()
+                info["socket"]        = (c.SocketDesignation or "").strip()
+                if c.MaxClockSpeed:   info["freq_max_mhz"] = float(c.MaxClockSpeed)
+                if c.L2CacheSize:     info["l2_cache_kb"]  = c.L2CacheSize
+                if c.L3CacheSize:     info["l3_cache_kb"]  = c.L3CacheSize
                 break
         except Exception:
             pass
@@ -166,6 +192,8 @@ def get_cpu_live():
     return dict(per_core=per_core, overall=overall, temp=temp)
 
 
+# ── RAM ───────────────────────────────────────────────────────────────────────
+
 def get_ram_info():
     vm = psutil.virtual_memory()
     info = dict(
@@ -177,7 +205,7 @@ def get_ram_info():
         try:
             for m in _wmi().Win32_PhysicalMemory():
                 t_code = m.MemoryType or 0
-                t_str = type_map.get(t_code, f"Type {t_code}" if t_code else "")
+                t_str  = type_map.get(t_code, f"Type {t_code}" if t_code else "")
                 info["modules"].append(dict(
                     slot=(m.DeviceLocator or "").strip(),
                     capacity=int(m.Capacity) if m.Capacity else 0,
@@ -192,12 +220,50 @@ def get_ram_info():
                     info["memory_type"] = t_str
         except Exception:
             pass
+    elif _sys.platform == "linux":
+        try:
+            out = _run(["dmidecode", "-t", "memory"])
+            slot, capacity, speed, mfr, pn, mtype = "", 0, None, "", "", ""
+            for line in out.splitlines():
+                s = line.strip()
+                if s.startswith("Locator:") and "Bank" not in s:
+                    slot = s.split(":", 1)[1].strip()
+                elif s.startswith("Size:"):
+                    raw = s.split(":", 1)[1].strip()
+                    m2 = _re.search(r"(\d+)\s*(MB|GB)", raw, _re.I)
+                    if m2:
+                        n, u = int(m2.group(1)), m2.group(2).upper()
+                        capacity = n * (1024**2 if u == "MB" else 1024**3)
+                elif s.startswith("Speed:"):
+                    m2 = _re.search(r"(\d+)", s)
+                    if m2:
+                        speed = int(m2.group(1))
+                        if not info["speed_mhz"]:
+                            info["speed_mhz"] = speed
+                elif s.startswith("Manufacturer:"):
+                    mfr = s.split(":", 1)[1].strip()
+                elif s.startswith("Part Number:"):
+                    pn = s.split(":", 1)[1].strip()
+                elif s.startswith("Type:") and "Detail" not in s:
+                    mtype = s.split(":", 1)[1].strip()
+                    if not info["memory_type"] and mtype and mtype != "Unknown":
+                        info["memory_type"] = mtype
+                elif s == "" and slot and capacity > 0:
+                    info["modules"].append(dict(
+                        slot=slot, capacity=capacity, speed=speed,
+                        type_str=mtype, manufacturer=mfr, part_number=pn,
+                    ))
+                    slot, capacity, speed, mfr, pn, mtype = "", 0, None, "", "", ""
+        except Exception:
+            pass
     n = len(info["modules"])
     info["channels"] = ("Quad-Channel" if n >= 4 else
                         "Dual-Channel" if n >= 2 else
                         "Single-Channel" if n == 1 else "")
     return info
 
+
+# ── Motherboard ───────────────────────────────────────────────────────────────
 
 def get_motherboard_info():
     info = dict(manufacturer="", product="", version="",
@@ -206,123 +272,115 @@ def get_motherboard_info():
         try:
             for b in _wmi().Win32_BaseBoard():
                 info["manufacturer"] = (b.Manufacturer or "").strip()
-                info["product"] = (b.Product or "").strip()
-                info["version"] = (b.Version or "").strip()
+                info["product"]      = (b.Product or "").strip()
+                info["version"]      = (b.Version or "").strip()
                 break
         except Exception:
             pass
         try:
             for b in _wmi().Win32_BIOS():
-                info["bios_vendor"] = (b.Manufacturer or "").strip()
+                info["bios_vendor"]  = (b.Manufacturer or "").strip()
                 info["bios_version"] = (b.SMBIOSBIOSVersion or b.Version or "").strip()
-                info["bios_date"] = _wmi_date(b.ReleaseDate)
+                info["bios_date"]    = _wmi_date(b.ReleaseDate)
                 break
         except Exception:
             pass
+    elif _sys.platform == "linux":
+        info["manufacturer"] = _dmi_read("board_vendor")
+        info["product"]      = _dmi_read("board_name")
+        info["version"]      = _dmi_read("board_version")
+        info["bios_vendor"]  = _dmi_read("bios_vendor")
+        info["bios_version"] = _dmi_read("bios_version")
+        info["bios_date"]    = _dmi_read("bios_date")
     return info
 
 
-# ── Display / Monitor detection (Windows) ─────────────────────────────────────
+# ── Display / Monitor detection ───────────────────────────────────────────────
 
-class _DEVMODEW(ctypes.Structure):
-    _fields_ = [
-        ("dmDeviceName",         wintypes.WCHAR * 32),
-        ("dmSpecVersion",        wintypes.WORD),
-        ("dmDriverVersion",      wintypes.WORD),
-        ("dmSize",               wintypes.WORD),
-        ("dmDriverExtra",        wintypes.WORD),
-        ("dmFields",             wintypes.DWORD),
-        ("dmPositionX",          wintypes.LONG),
-        ("dmPositionY",          wintypes.LONG),
-        ("dmDisplayOrientation", wintypes.DWORD),
-        ("dmDisplayFixedOutput", wintypes.DWORD),
-        ("dmColor",              wintypes.SHORT),
-        ("dmDuplex",             wintypes.SHORT),
-        ("dmYResolution",        wintypes.SHORT),
-        ("dmTTOption",           wintypes.SHORT),
-        ("dmCollate",            wintypes.SHORT),
-        ("dmFormName",           wintypes.WCHAR * 32),
-        ("dmLogPixels",          wintypes.WORD),
-        ("dmBitsPerPel",         wintypes.DWORD),
-        ("dmPelsWidth",          wintypes.DWORD),
-        ("dmPelsHeight",         wintypes.DWORD),
-        ("dmDisplayFlags",       wintypes.DWORD),
-        ("dmDisplayFrequency",   wintypes.DWORD),
-        ("dmICMMethod",          wintypes.DWORD),
-        ("dmICMIntent",          wintypes.DWORD),
-        ("dmMediaType",          wintypes.DWORD),
-        ("dmDitherType",         wintypes.DWORD),
-        ("dmReserved1",          wintypes.DWORD),
-        ("dmReserved2",          wintypes.DWORD),
-        ("dmPanningWidth",       wintypes.DWORD),
-        ("dmPanningHeight",      wintypes.DWORD),
-    ]
+if _sys.platform == "win32":
+    class _DEVMODEW(ctypes.Structure):
+        _fields_ = [
+            ("dmDeviceName",         wintypes.WCHAR * 32),
+            ("dmSpecVersion",        wintypes.WORD),
+            ("dmDriverVersion",      wintypes.WORD),
+            ("dmSize",               wintypes.WORD),
+            ("dmDriverExtra",        wintypes.WORD),
+            ("dmFields",             wintypes.DWORD),
+            ("dmPositionX",          wintypes.LONG),
+            ("dmPositionY",          wintypes.LONG),
+            ("dmDisplayOrientation", wintypes.DWORD),
+            ("dmDisplayFixedOutput", wintypes.DWORD),
+            ("dmColor",              wintypes.SHORT),
+            ("dmDuplex",             wintypes.SHORT),
+            ("dmYResolution",        wintypes.SHORT),
+            ("dmTTOption",           wintypes.SHORT),
+            ("dmCollate",            wintypes.SHORT),
+            ("dmFormName",           wintypes.WCHAR * 32),
+            ("dmLogPixels",          wintypes.WORD),
+            ("dmBitsPerPel",         wintypes.DWORD),
+            ("dmPelsWidth",          wintypes.DWORD),
+            ("dmPelsHeight",         wintypes.DWORD),
+            ("dmDisplayFlags",       wintypes.DWORD),
+            ("dmDisplayFrequency",   wintypes.DWORD),
+            ("dmICMMethod",          wintypes.DWORD),
+            ("dmICMIntent",          wintypes.DWORD),
+            ("dmMediaType",          wintypes.DWORD),
+            ("dmDitherType",         wintypes.DWORD),
+            ("dmReserved1",          wintypes.DWORD),
+            ("dmReserved2",          wintypes.DWORD),
+            ("dmPanningWidth",       wintypes.DWORD),
+            ("dmPanningHeight",      wintypes.DWORD),
+        ]
 
+    class _DISPLAY_DEVICEW(ctypes.Structure):
+        _fields_ = [
+            ("cb",           wintypes.DWORD),
+            ("DeviceName",   wintypes.WCHAR * 32),
+            ("DeviceString", wintypes.WCHAR * 128),
+            ("StateFlags",   wintypes.DWORD),
+            ("DeviceID",     wintypes.WCHAR * 128),
+            ("DeviceKey",    wintypes.WCHAR * 128),
+        ]
 
-class _DISPLAY_DEVICEW(ctypes.Structure):
-    _fields_ = [
-        ("cb",           wintypes.DWORD),
-        ("DeviceName",   wintypes.WCHAR * 32),
-        ("DeviceString", wintypes.WCHAR * 128),
-        ("StateFlags",   wintypes.DWORD),
-        ("DeviceID",     wintypes.WCHAR * 128),
-        ("DeviceKey",    wintypes.WCHAR * 128),
-    ]
-
-
-_DISPLAY_DEVICE_ATTACHED   = 0x00000001
-_DISPLAY_DEVICE_PRIMARY    = 0x00000004
-_DISPLAY_DEVICE_ACTIVE     = 0x00000001  # alias for monitor active
+    _DISPLAY_DEVICE_ATTACHED = 0x00000001
+    _DISPLAY_DEVICE_PRIMARY  = 0x00000004
 
 
 def _monitor_edid_key(s: str) -> str:
-    """Extract EDID 7-char vendor+product key (e.g. 'LGE5B14') from device id."""
     if not s:
         return ""
-    norm = s.replace("\\", "#")
+    norm  = s.replace("\\", "#")
     parts = norm.split("#")
     return parts[1].upper() if len(parts) >= 2 else ""
 
 
-def _get_primary_display():
-    """Primary display only — kept for backward compatibility."""
-    displays = _get_all_displays()
-    for d in displays:
-        if d.get("primary"):
-            return d
-    return displays[0] if displays else None
-
-
 def _get_all_displays():
-    """Enumerate every active physical display: resolution, refresh, monitor id."""
+    if _sys.platform != "win32":
+        return []
     out = []
     try:
-        u32 = ctypes.windll.user32
+        u32     = ctypes.windll.user32
         adapter = _DISPLAY_DEVICEW()
         adapter.cb = ctypes.sizeof(_DISPLAY_DEVICEW)
-
         i = 0
         while u32.EnumDisplayDevicesW(None, i, ctypes.byref(adapter), 0):
             if adapter.StateFlags & _DISPLAY_DEVICE_ATTACHED:
                 is_primary = bool(adapter.StateFlags & _DISPLAY_DEVICE_PRIMARY)
-                # Pull resolution / refresh for this adapter
                 dm = _DEVMODEW()
                 dm.dmSize = ctypes.sizeof(_DEVMODEW)
                 if u32.EnumDisplaySettingsW(adapter.DeviceName, -1, ctypes.byref(dm)):
-                    # Find attached monitor for friendly id
-                    mon = _DISPLAY_DEVICEW()
+                    mon   = _DISPLAY_DEVICEW()
                     mon.cb = ctypes.sizeof(_DISPLAY_DEVICEW)
                     monitor_device_id = ""
-                    monitor_string = ""
+                    monitor_string    = ""
                     j = 0
                     while u32.EnumDisplayDevicesW(adapter.DeviceName, j,
                                                    ctypes.byref(mon), 0):
                         if mon.StateFlags & _DISPLAY_DEVICE_ATTACHED:
                             monitor_device_id = mon.DeviceID
-                            monitor_string = mon.DeviceString
+                            monitor_string    = mon.DeviceString
                             break
                         j += 1
-
                     out.append(dict(
                         width=int(dm.dmPelsWidth),
                         height=int(dm.dmPelsHeight),
@@ -336,13 +394,56 @@ def _get_all_displays():
             i += 1
     except Exception:
         pass
-
-    # Primary first
     out.sort(key=lambda d: not d.get("primary"))
     return out
 
 
-# 3-letter EDID PNP IDs → manufacturer
+def _get_displays_linux():
+    displays = []
+    try:
+        out = _run(["xrandr", "--query"])
+        current_display = None
+        for line in out.splitlines():
+            conn = _re.match(
+                r"^(\S+)\s+connected\s*(primary)?\s*(\d+x\d+\+\d+\+\d+)?", line)
+            if conn:
+                name       = conn.group(1)
+                is_primary = conn.group(2) == "primary"
+                res        = conn.group(3)
+                w = h = 0
+                if res:
+                    m2 = _re.match(r"(\d+)x(\d+)", res)
+                    if m2:
+                        w, h = int(m2.group(1)), int(m2.group(2))
+                current_display = dict(name=name, primary=is_primary,
+                                       width=w, height=h, refresh=0,
+                                       adapter_name=name)
+                displays.append(current_display)
+            elif current_display and line.startswith("  "):
+                m2 = _re.search(r"(\d+\.\d+)\*", line)
+                if m2 and current_display["refresh"] == 0:
+                    current_display["refresh"] = int(float(m2.group(1)))
+    except Exception:
+        pass
+
+    if not displays:
+        try:
+            import tkinter as _tk
+            root = _tk.Tk()
+            root.withdraw()
+            w = root.winfo_screenwidth()
+            h = root.winfo_screenheight()
+            root.destroy()
+            displays.append(dict(name="Display", primary=True,
+                                  width=w, height=h, refresh=0, adapter_name=""))
+        except Exception:
+            pass
+
+    if not any(d["primary"] for d in displays) and displays:
+        displays[0]["primary"] = True
+    return displays
+
+
 _EDID_VENDOR = {
     "AAC": "AcerView", "ACI": "Asus", "ACR": "Acer", "AOC": "AOC",
     "APP": "Apple",  "ASU": "Asus", "AUS": "Asus", "BNQ": "BenQ",
@@ -363,7 +464,6 @@ _EDID_VENDOR = {
 
 
 def _decode_wmi_chars(arr):
-    """Decode UInt16 char array from WMI to string."""
     if not arr:
         return ""
     try:
@@ -373,7 +473,6 @@ def _decode_wmi_chars(arr):
 
 
 def _get_monitors():
-    """Returns list of monitor info dicts via WmiMonitorID, keyed by EDID key."""
     monitors = []
     if not WMI_AVAILABLE:
         return monitors
@@ -385,14 +484,14 @@ def _get_monitors():
     try:
         wmi_monitor = _wmilib.WMI(namespace="root\\wmi")
         for m in wmi_monitor.WmiMonitorID():
-            name = _decode_wmi_chars(getattr(m, "UserFriendlyName", None))
-            product = _decode_wmi_chars(getattr(m, "ProductCodeID", None))
-            mfr_code = _decode_wmi_chars(getattr(m, "ManufacturerName", None))
-            mfr = _EDID_VENDOR.get(mfr_code, mfr_code) if mfr_code else ""
-            label = name or product
+            name      = _decode_wmi_chars(getattr(m, "UserFriendlyName", None))
+            product   = _decode_wmi_chars(getattr(m, "ProductCodeID", None))
+            mfr_code  = _decode_wmi_chars(getattr(m, "ManufacturerName", None))
+            mfr       = _EDID_VENDOR.get(mfr_code, mfr_code) if mfr_code else ""
+            label     = name or product
             if mfr and label and mfr.lower() not in label.lower():
                 label = f"{mfr} {label}"
-            instance = getattr(m, "InstanceName", "") or ""
+            instance  = getattr(m, "InstanceName", "") or ""
             monitors.append(dict(
                 name=label or "Generic Display",
                 manufacturer=mfr,
@@ -405,16 +504,15 @@ def _get_monitors():
 
 
 def get_displays():
-    """Return all active physical displays with monitor model + resolution + refresh."""
+    if _sys.platform == "linux":
+        return _get_displays_linux()
+
     displays = _get_all_displays()
     monitors = _get_monitors()
-
-    # Build EDID-key → monitor name map
-    by_key = {m["edid_key"]: m for m in monitors if m.get("edid_key")}
-
-    result = []
+    by_key   = {m["edid_key"]: m for m in monitors if m.get("edid_key")}
+    result   = []
     for d in displays:
-        mon = by_key.get(d.get("edid_key", ""))
+        mon  = by_key.get(d.get("edid_key", ""))
         name = (mon["name"] if mon else d.get("monitor_string")) or "Generic Display"
         result.append(dict(
             name=name,
@@ -427,7 +525,75 @@ def get_displays():
     return result
 
 
+# ── GPU ───────────────────────────────────────────────────────────────────────
+
+def _get_gpu_linux():
+    gpus = []
+    try:
+        out = _run(["lspci", "-mm"])
+        for line in out.splitlines():
+            low = line.lower()
+            if any(k in low for k in ("vga compatible", "3d controller",
+                                       "display controller")):
+                parts = line.split('"')
+                if len(parts) >= 6:
+                    vendor = parts[3].strip()
+                    device = parts[5].strip()
+                    name   = f"{vendor} {device}".strip()
+                else:
+                    name = line.split('"')[0].split(":", 1)[-1].strip()
+                is_virtual = any(k in name.lower() for k in
+                                  ("virtual", "llvmpipe", "software"))
+                gpus.append(dict(name=name, vram="N/A", driver_version="",
+                                  driver_date="", is_virtual=is_virtual))
+    except Exception:
+        pass
+
+    # VRAM: NVIDIA via nvidia-smi
+    try:
+        out = _run(["nvidia-smi",
+                    "--query-gpu=name,memory.total",
+                    "--format=csv,noheader"])
+        for line in out.strip().splitlines():
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) == 2:
+                nv_name, vram_mib = parts
+                m2 = _re.search(r"(\d+)", vram_mib)
+                vram_str = bytes_to_human(int(m2.group(1)) * 1024 * 1024) if m2 else "N/A"
+                for g in gpus:
+                    if any(w in g["name"].lower() for w in nv_name.lower().split()):
+                        g["vram"] = vram_str
+                        break
+                else:
+                    gpus.append(dict(name=nv_name, vram=vram_str,
+                                      driver_version="", driver_date="",
+                                      is_virtual=False))
+    except Exception:
+        pass
+
+    # VRAM: AMD via sysfs
+    try:
+        for card in sorted(_Path("/sys/class/drm").iterdir()):
+            if _re.match(r"card\d+$", card.name):
+                vram_path = card / "device" / "mem_info_vram_total"
+                if vram_path.exists():
+                    vram_bytes = int(vram_path.read_text().strip())
+                    for g in gpus:
+                        if "amd" in g["name"].lower() or "radeon" in g["name"].lower():
+                            if g["vram"] == "N/A":
+                                g["vram"] = bytes_to_human(vram_bytes)
+                            break
+    except Exception:
+        pass
+
+    gpus.sort(key=lambda g: g.get("is_virtual", False))
+    return gpus
+
+
 def get_gpu_info():
+    if _sys.platform == "linux":
+        return _get_gpu_linux()
+
     gpus = []
     if WMI_AVAILABLE:
         try:
@@ -435,11 +601,11 @@ def get_gpu_info():
                 name = (g.Name or "").strip()
                 if not name:
                     continue
-                low = name.lower()
+                low        = name.lower()
                 is_virtual = any(k in low for k in
                                   ("sudomaker", "virtual", "remote", "idd"))
-                vram = g.AdapterRAM
-                vram_str = bytes_to_human(vram) if (vram and vram > 0) else "N/A"
+                vram       = g.AdapterRAM
+                vram_str   = bytes_to_human(vram) if (vram and vram > 0) else "N/A"
                 gpus.append(dict(
                     name=name,
                     vram=vram_str,
@@ -452,6 +618,8 @@ def get_gpu_info():
     gpus.sort(key=lambda g: g.get("is_virtual", False))
     return gpus
 
+
+# ── Storage ───────────────────────────────────────────────────────────────────
 
 def get_storage_info():
     drives = []
@@ -467,13 +635,28 @@ def get_storage_info():
             total=usage.total, used=usage.used, free=usage.free,
             percent=usage.percent, model="", drive_type="",
         ))
-    if WMI_AVAILABLE:
+
+    if _sys.platform == "linux":
+        for drv in drives:
+            dev = _Path(drv["device"]).name
+            if not dev:
+                continue
+            # strip partition number to get base device (sda1 → sda, nvme0n1p1 → nvme0n1)
+            base = _re.sub(r"p?\d+$", "", dev)
+            model_path = _Path(f"/sys/block/{base}/device/model")
+            if model_path.exists():
+                drv["model"] = model_path.read_text().strip()
+            rot_path = _Path(f"/sys/block/{base}/queue/rotational")
+            if rot_path.exists():
+                drv["drive_type"] = "HDD" if rot_path.read_text().strip() == "1" else "SSD"
+    elif WMI_AVAILABLE:
         try:
             disk_map = {}
             for disk in _wmi().Win32_DiskDrive():
-                model = (disk.Model or "").strip()
+                model  = (disk.Model or "").strip()
                 is_ssd = any(k in model.upper() for k in ("SSD", "NVME", "SOLID STATE"))
-                disk_map[disk.Index] = dict(model=model, drive_type="SSD" if is_ssd else "HDD")
+                disk_map[disk.Index] = dict(model=model,
+                                             drive_type="SSD" if is_ssd else "HDD")
             for dp in _wmi().Win32_DiskPartition():
                 try:
                     assoc = _wmi().query(
@@ -483,11 +666,11 @@ def get_storage_info():
                     for ld in assoc:
                         letter = ld.DeviceID
                         for d in drives:
-                            if d["device"].rstrip("\\") == letter or \
-                               d["mountpoint"].rstrip("\\") == letter:
+                            if (d["device"].rstrip("\\") == letter or
+                                    d["mountpoint"].rstrip("\\") == letter):
                                 di = disk_map.get(dp.DiskIndex)
                                 if di:
-                                    d["model"] = di["model"]
+                                    d["model"]      = di["model"]
                                     d["drive_type"] = di["drive_type"]
                 except Exception:
                     pass
@@ -496,9 +679,11 @@ def get_storage_info():
     return drives
 
 
+# ── Network ───────────────────────────────────────────────────────────────────
+
 def get_network_info():
-    stats = psutil.net_if_stats()
-    addrs = psutil.net_if_addrs()
+    stats    = psutil.net_if_stats()
+    addrs    = psutil.net_if_addrs()
     adapters = []
     for name, stat in stats.items():
         if not stat.isup:
@@ -515,7 +700,42 @@ def get_network_info():
     return adapters
 
 
+# ── Audio ─────────────────────────────────────────────────────────────────────
+
+def _get_audio_linux():
+    devices = []
+    try:
+        cards_path = _Path("/proc/asound/cards")
+        if cards_path.exists():
+            text = cards_path.read_text()
+            for line in text.splitlines():
+                m = _re.match(r"\s*\d+\s+\[.*?\]:\s+(.+)", line)
+                if m:
+                    raw   = m.group(1).strip()
+                    parts = raw.split(" - ", 1)
+                    name  = parts[1].strip() if len(parts) == 2 else raw
+                    devices.append(dict(name=name, manufacturer="", status="OK"))
+    except Exception:
+        pass
+
+    if not devices:
+        try:
+            out = _run(["aplay", "-l"])
+            for line in out.splitlines():
+                m = _re.search(r"card \d+: .+?\[(.+?)\]", line)
+                if m:
+                    name = m.group(1).strip()
+                    if not any(d["name"] == name for d in devices):
+                        devices.append(dict(name=name, manufacturer="", status="OK"))
+        except Exception:
+            pass
+    return devices
+
+
 def get_audio_info():
+    if _sys.platform == "linux":
+        return _get_audio_linux()
+
     devices = []
     if WMI_AVAILABLE:
         try:
@@ -531,6 +751,8 @@ def get_audio_info():
             pass
     return devices
 
+
+# ── Collect all ───────────────────────────────────────────────────────────────
 
 def collect_all():
     return dict(
