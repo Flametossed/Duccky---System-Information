@@ -33,6 +33,7 @@ jobs:
           --icon logo.ico
           --add-data "logo.png;."
           --add-data "logo.ico;."
+          --collect-all customtkinter
           main.py
 
       - uses: actions/upload-artifact@v4
@@ -66,6 +67,7 @@ jobs:
           --name "Duccky"
           --add-data "logo.png:."
           --add-data "logo.ico:."
+          --collect-all customtkinter
           main.py
 
       - name: Create AppDir
