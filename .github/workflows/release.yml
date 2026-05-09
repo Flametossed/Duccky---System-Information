@@ -29,7 +29,7 @@ jobs:
           pyinstaller
           --onefile
           --windowed
-          --name "Duccky"
+          --name "Duccky-portable"
           --icon logo.ico
           --add-data "logo.png;."
           --add-data "logo.ico;."
@@ -38,7 +38,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: Duccky-Windows
-          path: dist/Duccky.exe
+          path: dist/Duccky-portable.exe
 
   build-linux:
     runs-on: ubuntu-latest
@@ -72,6 +72,7 @@ jobs:
         run: |
           mkdir -p AppDir/usr/bin
           cp dist/Duccky AppDir/usr/bin/Duccky
+
           cp logo.png AppDir/logo.png
 
           cat > AppDir/AppRun << 'APPRUN'
@@ -96,12 +97,12 @@ jobs:
         run: |
           wget -q "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage" -O appimagetool
           chmod +x appimagetool
-          ARCH=x86_64 ./appimagetool --appimage-extract-and-run AppDir Duccky-x86_64.AppImage
+          ARCH=x86_64 ./appimagetool --appimage-extract-and-run AppDir Duccky-portable-x86_64.AppImage
 
       - uses: actions/upload-artifact@v4
         with:
           name: Duccky-Linux-AppImage
-          path: Duccky-x86_64.AppImage
+          path: Duccky-portable-x86_64.AppImage
 
   release:
     needs: [build-windows, build-linux]
@@ -122,6 +123,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/Duccky.exe
-            artifacts/Duccky-x86_64.AppImage
+            artifacts/Duccky-portable.exe
+            artifacts/Duccky-portable-x86_64.AppImage
           generate_release_notes: true
