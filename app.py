@@ -1,6 +1,7 @@
 """Duccky — modern system information viewer."""
 
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -54,12 +55,12 @@ SECTIONS = [
 
 _FONT = "Segoe UI" if sys.platform == "win32" else "DejaVu Sans"
 
-F_HEAD     = (_FONT, 11, "bold")
-F_BODY     = (_FONT, 10)
-F_SMALL    = (_FONT, 9)
-F_TITLE    = (_FONT, 18, "bold")
-F_BIG      = (_FONT, 22, "bold")
-F_BRAND    = (_FONT, 18, "bold")
+F_HEAD     = (_FONT, 14, "bold")
+F_BODY     = (_FONT, 13)
+F_SMALL    = (_FONT, 11)
+F_TITLE    = (_FONT, 24, "bold")
+F_BIG      = (_FONT, 32, "bold")
+F_BRAND    = (_FONT, 22, "bold")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOGO_PNG = os.path.join(HERE, "logo.png")
@@ -72,8 +73,8 @@ class App:
     def __init__(self):
         self.root = ctk.CTk()
         self.root.title("Duccky — System Information")
-        self.root.geometry("960x680")
-        self.root.minsize(820, 560)
+        self.root.geometry("1100x760")
+        self.root.minsize(900, 620)
         self.root.configure(fg_color=BG)
 
         # Window icon
@@ -88,7 +89,7 @@ class App:
         try:
             if os.path.exists(LOGO_PNG):
                 pil = Image.open(LOGO_PNG)
-                self._logo_img = ctk.CTkImage(light_image=pil, dark_image=pil, size=(40, 40))
+                self._logo_img = ctk.CTkImage(light_image=pil, dark_image=pil, size=(48, 48))
         except Exception:
             pass
 
@@ -105,7 +106,7 @@ class App:
 
     def _build_skeleton(self):
         # Sidebar
-        self.sidebar = ctk.CTkFrame(self.root, width=215, fg_color=SIDEBAR_BG, corner_radius=0)
+        self.sidebar = ctk.CTkFrame(self.root, width=250, fg_color=SIDEBAR_BG, corner_radius=0)
         self.sidebar.pack(side="left", fill="y")
         self.sidebar.pack_propagate(False)
 
@@ -130,8 +131,8 @@ class App:
         # ── Nav buttons ───────────────────────────────────────────────────────
         self.nav_btns: dict[str, dict] = {}
         for key, icon, label in SECTIONS:
-            row = ctk.CTkFrame(self.sidebar, fg_color="transparent", height=38)
-            row.pack(fill="x", padx=10, pady=2)
+            row = ctk.CTkFrame(self.sidebar, fg_color="transparent", height=44)
+            row.pack(fill="x", padx=10, pady=3)
             row.pack_propagate(False)
 
             indicator = ctk.CTkFrame(row, width=3, fg_color="transparent", corner_radius=2)
@@ -143,7 +144,7 @@ class App:
                 text=f"  {icon}    {label}",
                 font=F_BODY, anchor="w",
                 fg_color="transparent", hover_color=CARD_HL,
-                text_color=TEXT_SEC, height=34, corner_radius=6,
+                text_color=TEXT_SEC, height=40, corner_radius=6,
                 command=lambda k=key: self._show_section(k),
             )
             btn.pack(side="left", fill="both", expand=True, padx=(6, 0))
@@ -175,9 +176,9 @@ class App:
             ("⊡",  self._snapshot,   C["gpu"]),
         ]:
             b = ctk.CTkButton(
-                btns, text=txt, font=("Segoe UI", 13),
+                btns, text=txt, font=(_FONT, 16),
                 fg_color=CARD_HL, hover_color=BORDER,
-                text_color=color, width=10, height=32, corner_radius=6,
+                text_color=color, width=10, height=38, corner_radius=6,
                 command=cmd,
             )
             b.pack(side="left", expand=True, fill="x", padx=2)
@@ -187,22 +188,22 @@ class App:
         self.content_outer.pack(side="left", fill="both", expand=True)
 
         # Section header bar
-        hbar = ctk.CTkFrame(self.content_outer, fg_color=BG, height=64)
-        hbar.pack(fill="x", padx=24, pady=(20, 0))
+        hbar = ctk.CTkFrame(self.content_outer, fg_color=BG, height=76)
+        hbar.pack(fill="x", padx=28, pady=(18, 0))
         hbar.pack_propagate(False)
 
         title_col = ctk.CTkFrame(hbar, fg_color="transparent")
         title_col.pack(side="left", anchor="w", fill="y")
         self.section_title = ctk.CTkLabel(
             title_col, text="", font=F_TITLE, text_color=TEXT_PRI, anchor="w")
-        self.section_title.pack(anchor="w", pady=(6, 0))
+        self.section_title.pack(anchor="w", pady=(8, 0))
         self.section_subtitle = ctk.CTkLabel(
             title_col, text="", font=F_SMALL, text_color=TEXT_DIM, anchor="w")
-        self.section_subtitle.pack(anchor="w", pady=(2, 0))
+        self.section_subtitle.pack(anchor="w", pady=(4, 0))
 
         # Thin divider under header
         ctk.CTkFrame(self.content_outer, height=1, fg_color=BORDER).pack(
-            fill="x", padx=24, pady=(8, 0))
+            fill="x", padx=28, pady=(6, 0))
 
         # Scrollable content
         self.scroll = ctk.CTkScrollableFrame(
@@ -210,13 +211,13 @@ class App:
             scrollbar_button_color=BORDER,
             scrollbar_button_hover_color=CARD_HL,
         )
-        self.scroll.pack(fill="both", expand=True, padx=18, pady=(10, 16))
+        self.scroll.pack(fill="both", expand=True, padx=22, pady=(8, 14))
 
     def _show_loading(self):
         self.loading_lbl = ctk.CTkLabel(
             self.scroll,
             text="Collecting system information…",
-            font=("Segoe UI", 13), text_color=TEXT_SEC,
+            font=(_FONT, 15), text_color=TEXT_SEC,
         )
         self.loading_lbl.pack(expand=True, pady=80)
 
@@ -239,31 +240,31 @@ class App:
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
-    def _card(self, parent, color=None, pady=(0, 12)):
+    def _card(self, parent, color=None, pady=(0, 10)):
         outer = ctk.CTkFrame(parent, fg_color=CARD_BG, corner_radius=10)
         outer.pack(fill="x", pady=pady, padx=2)
         return outer
 
-    def _section_header(self, parent, text, color, padx=18, pady=(14, 8)):
+    def _section_header(self, parent, text, color, padx=20, pady=(12, 6)):
         row = ctk.CTkFrame(parent, fg_color="transparent")
         row.pack(anchor="w", fill="x", padx=padx, pady=pady)
-        bar = ctk.CTkFrame(row, width=3, height=14, fg_color=color, corner_radius=2)
+        bar = ctk.CTkFrame(row, width=4, height=18, fg_color=color, corner_radius=2)
         bar.pack(side="left", padx=(0, 10))
         bar.pack_propagate(False)
         ctk.CTkLabel(row, text=text, font=F_HEAD,
                      text_color=color, anchor="w").pack(side="left")
 
-    def _row(self, parent, label, value, padx=18, pady=(3, 3)):
+    def _row(self, parent, label, value, padx=20, pady=(2, 2)):
         row = ctk.CTkFrame(parent, fg_color="transparent")
         row.pack(fill="x", padx=padx, pady=pady)
         ctk.CTkLabel(row, text=label, font=F_BODY, text_color=TEXT_SEC,
-                     width=160, anchor="w").pack(side="left")
+                     width=200, anchor="w").pack(side="left")
         ctk.CTkLabel(row, text=str(value), font=F_BODY, text_color=TEXT_PRI,
-                     anchor="w", wraplength=480, justify="left").pack(
+                     anchor="w", wraplength=620, justify="left").pack(
             side="left", fill="x", expand=True)
 
     def _pbar(self, parent, left_text, pct, right_text="",
-              color=ACCENT_PRI, padx=18, pady=(6, 10)):
+              color=ACCENT_PRI, padx=20, pady=(4, 8)):
         frame = ctk.CTkFrame(parent, fg_color="transparent")
         frame.pack(fill="x", padx=padx, pady=pady)
 
@@ -275,13 +276,13 @@ class App:
                              text_color=TEXT_DIM, anchor="e")
         rlbl.pack(side="right")
 
-        bar = ctk.CTkProgressBar(frame, height=8, corner_radius=4,
+        bar = ctk.CTkProgressBar(frame, height=10, corner_radius=5,
                                   fg_color=BORDER, progress_color=color)
         bar.pack(fill="x", pady=(4, 0))
         bar.set(min(pct / 100.0, 1.0))
         return bar, rlbl
 
-    def _spacer(self, parent, h=10):
+    def _spacer(self, parent, h=6):
         ctk.CTkLabel(parent, text="", height=h).pack()
 
     def _show_status(self, msg: str, color: str = None):
@@ -343,6 +344,60 @@ class App:
         threading.Thread(target=self._load_data, daemon=True).start()
         self._show_status("Refreshing…", TEXT_SEC)
 
+    # ── OS integration helpers ────────────────────────────────────────────────
+
+    def _reveal_in_explorer(self, path: str):
+        path = os.path.abspath(path)
+        try:
+            if sys.platform == "win32":
+                subprocess.Popen(["explorer", f"/select,{path}"])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", "-R", path])
+            else:
+                subprocess.Popen(["xdg-open", os.path.dirname(path)])
+        except Exception:
+            pass
+
+    def _copy_image_to_clipboard(self, path: str) -> bool:
+        path = os.path.abspath(path).replace("'", "''")
+        try:
+            if sys.platform == "win32":
+                ps = (
+                    "Add-Type -AssemblyName System.Windows.Forms;"
+                    "Add-Type -AssemblyName System.Drawing;"
+                    f"$img = [System.Drawing.Image]::FromFile('{path}');"
+                    "[System.Windows.Forms.Clipboard]::SetImage($img);"
+                    "$img.Dispose()"
+                )
+                r = subprocess.run(
+                    ["powershell", "-NoProfile", "-STA", "-Command", ps],
+                    capture_output=True, timeout=10,
+                )
+                return r.returncode == 0
+            if sys.platform == "darwin":
+                osa = f'set the clipboard to (read (POSIX file "{path}") as JPEG picture)'
+                r = subprocess.run(["osascript", "-e", osa],
+                                   capture_output=True, timeout=10)
+                return r.returncode == 0
+            # Linux: try wl-copy then xclip
+            for cmd in (
+                ["wl-copy", "--type", "image/png"],
+                ["xclip", "-selection", "clipboard", "-t", "image/png", "-i", path],
+            ):
+                try:
+                    if cmd[0] == "wl-copy":
+                        with open(path, "rb") as f:
+                            r = subprocess.run(cmd, stdin=f, capture_output=True, timeout=10)
+                    else:
+                        r = subprocess.run(cmd, capture_output=True, timeout=10)
+                    if r.returncode == 0:
+                        return True
+                except FileNotFoundError:
+                    continue
+            return False
+        except Exception:
+            return False
+
     # ── Export TXT ────────────────────────────────────────────────────────────
 
     def _export_txt(self):
@@ -362,6 +417,7 @@ class App:
             text = self._format_text_report()
             with open(path, "w", encoding="utf-8") as f:
                 f.write(text)
+            self._reveal_in_explorer(path)
             self._show_status(f"Exported: {os.path.basename(path)}", C["storage"])
         except Exception as e:
             self._show_status(f"Export failed: {e}", "#ff6b6b")
@@ -523,7 +579,10 @@ class App:
             return
         try:
             spec_image.render(self.data, path)
-            self._show_status(f"Saved: {os.path.basename(path)}", C["gpu"])
+            copied = self._copy_image_to_clipboard(path)
+            name = os.path.basename(path)
+            msg = f"Saved + copied: {name}" if copied else f"Saved: {name}"
+            self._show_status(msg, C["gpu"])
         except Exception as e:
             self._show_status(f"Snapshot failed: {e}", "#ff6b6b")
 
@@ -687,11 +746,11 @@ class App:
             grid.columnconfigure(col, weight=1)
             ctk.CTkLabel(cell, text=f"Core {i}", font=F_SMALL,
                          text_color=TEXT_DIM, anchor="w").pack(fill="x")
-            b = ctk.CTkProgressBar(cell, height=5, corner_radius=2,
+            b = ctk.CTkProgressBar(cell, height=7, corner_radius=3,
                                     fg_color=BORDER, progress_color=C["cpu"])
-            b.pack(fill="x", pady=(2, 0))
+            b.pack(fill="x", pady=(3, 0))
             b.set(0)
-            l = ctk.CTkLabel(cell, text="0%", font=("Segoe UI", 8),
+            l = ctk.CTkLabel(cell, text="0%", font=(_FONT, 10),
                               text_color=TEXT_DIM, anchor="e")
             l.pack(fill="x")
             core_widgets.append((b, l))
@@ -726,8 +785,8 @@ class App:
         s_row = ctk.CTkFrame(card, fg_color="transparent")
         s_row.pack(fill="x", padx=18, pady=(6, 4))
         ctk.CTkLabel(s_row, text=used, font=F_BIG, text_color=TEXT_PRI).pack(side="left")
-        ctk.CTkLabel(s_row, text=f"  /  {total}", font=("Segoe UI", 13),
-                     text_color=TEXT_SEC).pack(side="left", pady=4)
+        ctk.CTkLabel(s_row, text=f"  /  {total}", font=(_FONT, 16),
+                     text_color=TEXT_SEC).pack(side="left", pady=8)
         bar, rlbl = self._pbar(card, f"In use", d["percent"],
                                 f"{d['percent']:.0f}%   ·   {avail} free",
                                 color=C["ram"])
